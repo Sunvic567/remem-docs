@@ -1,0 +1,192 @@
+---
+title: Search Memories
+api: GET https://api.remem.online/memories/search
+description: Semantic search — returns the most relevant memories for a query.
+---
+
+## Overview
+
+Search memories using natural language. You do not need to match exact words — Remem understands meaning. Ask "where does this user live?" and it finds "User is based in Lagos, Nigeria" even though none of the words overlap.
+
+Results are ranked by hybrid scoring: **70% semantic relevance + 20% recency + 10% importance.** Every result includes `score_detail` showing exactly how it scored.
+
+---
+
+## Request
+
+### Headers
+
+| Name | Required | Value |
+|------|----------|-------|
+| `X-API-Key` | Yes | Your Remem API key |
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | Yes | — | Natural language search query. |
+| `user_id` | string | Yes | — | Search within memories for this user. |
+| `agent_id` | string | Yes | — | Search within memories for this agent. |
+| `top_k` | integer | No | `5` | Number of results to return. Min 1, max 20. |
+| `min_score` | float | No | `0.70` | Minimum hybrid score threshold. Use `0.0` to return everything. |
+| `memory_type` | string | No | `null` | Filter by `episodic`, `semantic`, or `summary`. Omit to search all types. |
+
+<CodeGroup>
+```bash curl
+curl "https://api.remem.online/memories/search?\
+query=where+does+this+user+live&\
+user_id=user_123&\
+agent_id=support_bot&\
+top_k=5&\
+min_score=0.0" \
+  -H "X-API-Key: rm_live_xxx"
+```
+
+```python Python SDK
+memories = client.recall(
+    "where does this user live?",
+    user_id="user_123",
+    agent_id="support_bot",
+    top_k=5,
+    min_score=0.0,
+)
+
+for m in memories:
+    print(f"[{m.score:.3f}] {m.content}")
+    print(m.score_detail)
+```
+
+```python Python (httpx)
+import httpx
+
+resp = httpx.get(
+    "https://api.remem.online/memories/search",
+    headers={"X-API-Key": "rm_live_xxx"},
+    params={
+        "query":     "where does this user live?",
+        "user_id":   "user_123",
+        "agent_id":  "support_bot",
+        "top_k":     5,
+        "min_score": 0.0,
+    }
+)
+print(resp.json())
+```
+
+```javascript JavaScript
+const params = new URLSearchParams({
+  query:     "where does this user live?",
+  user_id:   "user_123",
+  agent_id:  "support_bot",
+  top_k:     5,
+  min_score: 0.0,
+});
+
+const response = await fetch(
+  `https://api.remem.online/memories/search?${params}`,
+  { headers: { "X-API-Key": "rm_live_xxx" } }
+);
+const data = await response.json();
+```
+</CodeGroup>
+
+---
+
+## Response
+
+### 200 — Success
+
+```json
+{
+  "memories": [
+    {
+      "id":          "775263ee-73af-4416-9804-1f274048ae08",
+      "content":     "User is based in Lagos, Nigeria",
+      "user_id":     "user_123",
+      "agent_id":    "support_bot",
+      "memory_type": "semantic",
+      "importance":  0.9,
+      "score":       0.8912,
+      "score_detail": {
+        "cosine":     0.8900,
+        "recency":    0.9800,
+        "importance": 0.9000,
+        "final":      0.8912
+      },
+      "metadata":      {},
+      "created_at":    "2026-06-01T10:00:00Z",
+      "last_accessed": "2026-06-07T09:00:00Z",
+      "expires_at":    null
+    }
+  ],
+  "query": "where does this user live?",
+  "total": 1
+}
+```
+
+### Memory Object Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Memory UUID |
+| `content` | string | The stored memory text |
+| `user_id` | string | User this memory belongs to |
+| `agent_id` | string | Agent that stored this memory |
+| `memory_type` | string | `episodic`, `semantic`, or `summary` |
+| `importance` | float | Importance score 0.0–1.0 |
+| `score` | float | Final hybrid score for this query |
+| `score_detail` | object | Breakdown of how the score was calculated |
+| `metadata` | object | Any extra data stored with the memory |
+| `created_at` | string | ISO timestamp when memory was stored |
+| `last_accessed` | string | ISO timestamp of last retrieval |
+| `expires_at` | string or null | ISO timestamp of expiry. `null` means permanent |
+
+---
+
+## Error Responses
+
+| Code | Meaning | Fix |
+|------|---------|-----|
+| `401` | Invalid or missing API key | Check your key |
+| `422` | Missing required parameter | Include `query`, `user_id`, and `agent_id` |
+
+---
+
+## Notes
+
+<AccordionGroup>
+  <Accordion title="Understanding score_detail">
+    Use `score_detail` to debug why a memory ranked where it did:
+
+    ```python
+    for m in memories:
+        print(f"Content:    {m.content}")
+        print(f"Cosine:     {m.score_detail['cosine']:.3f}")
+        print(f"Recency:    {m.score_detail['recency']:.3f}")
+        print(f"Importance: {m.score_detail['importance']:.3f}")
+        print(f"Final:      {m.score_detail['final']:.3f}")
+        print()
+    ```
+
+    If the wrong memory is ranking first, check which signal is pulling it up.
+    High recency but low cosine means it is recent but not very relevant.
+    High cosine but low recency means it is relevant but stale.
+  </Accordion>
+  <Accordion title="Tuning min_score">
+    `0.70` (default) — balanced, works well for most use cases.
+    `0.85+` — strict, only highly relevant memories.
+    `0.50` — loose, returns anything remotely related.
+    `0.0` — everything, useful for debugging empty results.
+
+    Start with `0.0` when debugging. If you are getting empty results
+    it usually means `min_score` is too high, not that the memories are missing.
+  </Accordion>
+  <Accordion title="Getting empty results">
+    If search returns zero memories, check in this order:
+
+    1. Set `min_score=0.0` — if results appear, your threshold is too high
+    2. Check `user_id` and `agent_id` match exactly what you used when storing
+    3. Call `GET /memories` to list all stored memories and confirm they exist
+    4. Check that memories have not expired via `expires_at`
+  </Accordion>
+</AccordionGroup>

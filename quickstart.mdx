@@ -1,0 +1,208 @@
+---
+title: Quick Start
+description: Store your first memory and retrieve it in under 5 minutes.
+---
+
+## Before You Start
+
+You need two things:
+
+1. A Remem API key — [get one free at remem.online](https://remem.online)
+2. Python 3.10 or higher
+
+<Warning>
+  Your API key looks like `rm_live_xxxxxxxxxxxxxxxxxxxx`. Keep it safe — it's shown once when created. If you lose it contact support@remem.online for a new one.
+</Warning>
+
+---
+
+## Step 1 — Install the SDK
+
+```bash
+pip install remem-py
+```
+
+Verify it installed:
+
+```bash
+python -c "from remem import RememClient; print('Remem installed successfully')"
+```
+
+---
+
+## Step 2 — Set Your API Key
+
+Never hardcode your API key in source code. Use an environment variable:
+
+```bash
+# .env file
+REMEM_API_KEY=rm_live_xxx
+```
+
+```python
+import os
+from dotenv import load_dotenv
+from remem import RememClient
+
+load_dotenv()
+
+client = RememClient(
+    api_key=os.getenv("REMEM_API_KEY"),
+    base_url="https://api.remem.online",
+)
+```
+
+---
+
+## Step 3 — Store Your First Memory
+
+```python
+result = client.remember(
+    "User prefers concise bullet points over long paragraphs",
+    user_id="user_123",
+    agent_id="support_bot",
+    memory_type="semantic",
+    importance=0.8,
+)
+
+print(result.id)
+# 775263ee-73af-4416-9804-1f274048ae08
+```
+
+<Check>
+  You just stored your first memory. Remem embedded the text using OpenAI
+  and saved it to your account. The UUID is your memory's permanent ID —
+  use it later to update or delete this specific memory.
+</Check>
+
+---
+
+## Step 4 — Load Context at Session Start
+
+Call this at the beginning of every conversation — before the user says anything:
+
+```python
+context = client.context(
+    user_id="user_123",
+    agent_id="support_bot",
+    top_k=10,
+)
+
+print(f"Loaded {context.total} memories")
+for m in context.memories:
+    print(f"  [{m.importance}] {m.content}")
+
+# [0.8] User prefers concise bullet points over long paragraphs
+```
+
+---
+
+## Step 5 — Search Semantically
+
+```python
+memories = client.recall(
+    query="what are this user's communication preferences?",
+    user_id="user_123",
+    agent_id="support_bot",
+    top_k=5,
+    min_score=0.0,
+)
+
+for m in memories:
+    print(f"[{m.score:.3f}] {m.content}")
+
+# [0.891] User prefers concise bullet points over long paragraphs
+```
+
+<Check>
+  The query used completely different words from the stored memory —
+  "communication preferences" vs "bullet points over long paragraphs".
+  Remem found it anyway because it searches by meaning, not keywords.
+  That is semantic search working correctly.
+</Check>
+
+---
+
+## Step 6 — Inject Memory Into Your Agent
+
+Here is the complete pattern for a memory-powered agent:
+
+```python
+import os
+from openai import OpenAI
+from remem import RememClient
+from dotenv import load_dotenv
+
+load_dotenv()
+
+openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+remem  = RememClient(api_key=os.getenv("REMEM_API_KEY"))
+
+AGENT_ID = "support_bot"
+
+
+def chat(user_id: str, user_message: str) -> str:
+
+    # 1 — Load context before responding
+    context = remem.context(
+        user_id=user_id,
+        agent_id=AGENT_ID,
+        current_message=user_message,
+        top_k=10,
+    )
+
+    # 2 — Build system prompt with memory
+    memory_lines = "\n".join(f"- {m.content}" for m in context.memories)
+    system_prompt = f"""You are a helpful assistant.
+
+What you already know about this user:
+{memory_lines if memory_lines else "Nothing yet — this is a new user."}
+
+Use this to give personalised responses.
+Never ask for information you already know."""
+
+    # 3 — Call the LLM
+    response = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_message},
+        ],
+    )
+    reply = response.choices[0].message.content
+
+    # 4 — Save what the user told you
+    remem.remember(
+        content=user_message,
+        user_id=user_id,
+        agent_id=AGENT_ID,
+        memory_type="episodic",
+    )
+
+    return reply
+
+
+# Run it
+print(chat("user_123", "Hi, I'm Victor. I build AI agents in Lagos."))
+print(chat("user_123", "What do you know about me?"))
+# Agent responds: "You're Victor, you build AI agents, and you're based in Lagos."
+```
+
+---
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Understand how API keys work
+  </Card>
+  <Card title="Memory Types" icon="brain" href="/concept/memory-types">
+    When to use episodic vs semantic
+  </Card>
+  <Card title="LangGraph Guide" icon="diagram-project" href="/guide/langgraph">
+    Add memory to a LangGraph agent
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guide/error-handling">
+    Handle errors gracefully in production
+  </Card>
+</CardGroup>

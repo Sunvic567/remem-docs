@@ -1,0 +1,77 @@
+{
+  "name": "Remem",
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png"
+  },
+  "favicon": "/favicon.png",
+  "colors": {
+    "primary": "#00d4ff",
+    "light": "#00d4ff",
+    "dark": "#0090b3",
+    "background": {
+      "dark": "#060810"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "API Keys",
+      "url": "https://dev.remem.online"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "https://dev.remem.online"
+  },
+  "tabs": [
+    {
+      "name": "API Reference",
+      "url": "api-reference"
+    },
+    {
+      "name": "Guides",
+      "url": "guide"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Get Started",
+      "pages": [
+        "introduction",
+        "quickstart",
+        "authentication"
+      ]
+    },
+    {
+      "group": "Concepts",
+      "pages": [
+        "concept/memory-types",
+        "concept/hybrid-scoring"
+      ]
+    },
+    {
+      "group": "API Reference",
+      "pages": [
+        "api-reference/store",
+        "api-reference/search",
+        "api-reference/context",
+        "api-reference/list",
+        "api-reference/update",
+        "api-reference/delete",
+        "api-reference/wipe"
+      ]
+    },
+    {
+      "group": "Guides",
+      "pages": [
+        "guide/first-agent",
+        "guide/langgraph",
+        "guide/error-handling"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/sunvic567/remem",
+    "twitter": "https://twitter.com/sunvic567"
+  }
+}

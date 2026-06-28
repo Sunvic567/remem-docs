@@ -1,0 +1,109 @@
+---
+title: Introduction
+description: Your AI agent forgets every user. Every session. Remem fixes that.
+---
+
+## What is Remem?
+
+Remem is a memory API for AI agents.
+
+You call one method to store what your agent learns. You call another to get it back. Remem handles the embedding, storage, retrieval, and ranking — so you don't have to build any of that yourself.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="bolt" href="/quickstart">
+    Store your first memory in under 5 minutes
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/store">
+    Full endpoint documentation
+  </Card>
+  <Card title="Python SDK" icon="python" href="/quickstart#install">
+    pip install remem-py
+  </Card>
+  <Card title="LangGraph Guide" icon="diagram-project" href="/guide/langgraph">
+    Add memory to your LangGraph agent
+  </Card>
+</CardGroup>
+
+---
+
+## The Problem Remem Solves
+
+Every time a user starts a new conversation with your AI agent, it starts from zero.
+
+It doesn't remember:
+- Their name or where they're based
+- What they complained about last week
+- Their communication preferences
+- Anything they've ever told it before
+
+You're either stuffing conversation history into the system prompt and hitting token limits — or your agent keeps asking the same questions over and over.
+
+**Remem fixes that.**
+
+---
+
+## Why Remem Is Different
+
+Most memory solutions return the most *similar* memory. Remem returns the most *useful* one.
+
+The difference is hybrid scoring:
+
+```
+final score = 70% semantic relevance
+            + 20% recency          ← newer memories rank higher
+            + 10% importance       ← you control what matters most
+```
+
+Every search result also includes `score_detail` — a full breakdown showing exactly why each memory ranked where it did. No black box. No guessing why your agent pulled the wrong memory.
+
+<AccordionGroup>
+  <Accordion title="Semantic relevance (70%)">
+    How closely does the stored memory match your query in meaning — not just words?
+    Ask "where does this user live?" and Remem finds "User is based in Lagos, Nigeria"
+    even though none of the words overlap. That's semantic search working.
+  </Accordion>
+  <Accordion title="Recency decay (20%)">
+    Newer memories score higher. A preference stored yesterday outranks an identical
+    one from 6 months ago. Stale facts naturally fade. Fresh facts naturally win.
+    This is what prevents old data from dominating retrieval over time.
+  </Accordion>
+  <Accordion title="Importance weighting (10%)">
+    When you store a memory you pass an importance score from 0.0 to 1.0.
+    High importance memories get a consistent boost on every search.
+    Use it for stable facts you always want surfaced — name, location, plan type.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## How It Works
+
+<Steps>
+  <Step title="Store">
+    When your agent learns something about a user, call `remember()`.
+    Remem embeds the text, checks for duplicates, and saves it.
+  </Step>
+  <Step title="Retrieve context">
+    At the start of every session, call `context()`.
+    Remem returns the most important and recent memories before the user says a word.
+    Your agent already knows who they are.
+  </Step>
+  <Step title="Search">
+    When the user asks something specific, call `recall()`.
+    Remem returns memories ranked by hybrid score — relevant, recent, and important.
+  </Step>
+</Steps>
+
+---
+
+## What Makes Remem Different From Other Solutions
+
+| | Remem | mem0 / LangMem | Building yourself |
+|---|---|---|---|
+| Retrieval method | Hybrid scoring | Pure vector similarity | Depends on implementation |
+| Score transparency | ✅ score_detail on every result | ❌ Black box | Depends |
+| Duplicate detection | ✅ Built in | Partial | You build it |
+| BYOD support | ✅ Enterprise | ❌ | N/A |
+| Framework agnostic | ✅ Any LLM or agent | Partial | ✅ |
+| Setup time | 5 minutes | 15-30 minutes | 2-3 days |
+| Maintenance | None — we handle it | Minimal | Ongoing |

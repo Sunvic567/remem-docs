@@ -1,0 +1,270 @@
+---
+title: Error Handling
+description: Handle Remem errors gracefully so your agent never crashes in production.
+---
+
+## Overview
+
+Remem raises specific exceptions for every failure type. Catching the right exception means your agent can respond intelligently to each situation instead of crashing with an unhandled error.
+
+---
+
+## Import All Exception Classes
+
+```python
+from remem import (
+    RememClient,
+    RememError,            # base — catches any Remem error
+    AuthenticationError,   # 401 — bad or missing API key
+    PlanLimitError,        # 402 — hit memory limit for your plan
+    MemoryNotFoundError,   # 404 — memory ID does not exist
+    DuplicateMemoryError,  # 409 — near-identical memory already stored
+)
+```
+
+---
+
+## Handling Each Error
+
+### AuthenticationError — 401
+
+Raised when your API key is invalid, missing, or revoked.
+
+```python
+from remem import RememClient, AuthenticationError
+
+client = RememClient(api_key=os.getenv("REMEM_API_KEY"))
+
+try:
+    client.remember("something", user_id="u1", agent_id="bot")
+except AuthenticationError:
+    # Key is wrong or missing
+    # Do not retry — fix the key first
+    print("Invalid API key. Check your REMEM_API_KEY environment variable.")
+    raise SystemExit(1)
+```
+
+<Warning>
+  Never retry on AuthenticationError. The key is wrong — retrying
+  with the same key will always fail. Fix the key first.
+</Warning>
+
+---
+
+### PlanLimitError — 402
+
+Raised when your account has reached its memory limit for the current plan.
+
+```python
+from remem import PlanLimitError
+
+try:
+    result = client.remember("something", user_id="u1", agent_id="bot")
+except PlanLimitError as e:
+    # User has hit the plan limit
+    # Options: upgrade plan, wipe old memories, or skip storing
+    print(f"Memory limit reached: {e.detail}")
+    print("Upgrade at remem.online/pricing")
+```
+
+**Handling this gracefully in your agent:**
+
+```python
+try:
+    client.remember(user_message, user_id=user_id, agent_id=agent_id)
+except PlanLimitError:
+    # Continue the conversation — just do not store this message
+    # Optionally notify the user or log it
+    pass
+```
+
+<Info>
+  Your agent can still read and search memories when the limit is hit —
+  only new writes are blocked. Your agent will not go blind, it just
+  stops learning new things until you upgrade.
+</Info>
+
+---
+
+### MemoryNotFoundError — 404
+
+Raised when you try to update or delete a memory ID that does not exist.
+
+```python
+from remem import MemoryNotFoundError
+
+try:
+    client.update(
+        memory_id="non-existent-id",
+        user_id="u1",
+        agent_id="bot",
+        new_content="something",
+    )
+except MemoryNotFoundError:
+    # Memory was already deleted or ID is wrong
+    # Safe to ignore in most cases
+    pass
+```
+
+---
+
+### DuplicateMemoryError — 409
+
+Raised when you try to store content that already exists at 95% similarity or above.
+
+```python
+from remem import DuplicateMemoryError
+
+try:
+    result = client.remember(
+        "User is based in Lagos, Nigeria",
+        user_id="u1",
+        agent_id="bot",
+    )
+except DuplicateMemoryError:
+    # Already stored — this is safe to ignore
+    pass
+```
+
+<Info>
+  DuplicateMemoryError is not a real error in most cases — it means
+  Remem protected your database from storing the same fact twice.
+  Ignore it silently in production.
+</Info>
+
+---
+
+### RememError — Catch-All
+
+Catches any Remem error that is not one of the specific types above.
+Useful as a fallback for unexpected API errors.
+
+```python
+from remem import RememError
+
+try:
+    client.remember("something", user_id="u1", agent_id="bot")
+except RememError as e:
+    print(f"Remem API error {e.status_code}: {e.detail}")
+```
+
+---
+
+## Production Pattern — Full Error Handling
+
+This is the pattern to use in any production agent:
+
+```python
+from remem import (
+    RememClient,
+    RememError,
+    AuthenticationError,
+    PlanLimitError,
+    MemoryNotFoundError,
+    DuplicateMemoryError,
+)
+import logging
+
+logger = logging.getLogger(__name__)
+client = RememClient(api_key=os.getenv("REMEM_API_KEY"))
+
+
+def safe_remember(content: str, user_id: str, agent_id: str) -> bool:
+    """
+    Store a memory safely. Returns True if stored, False if skipped.
+    Never raises — your agent continues regardless.
+    """
+    try:
+        client.remember(content, user_id=user_id, agent_id=agent_id)
+        return True
+
+    except DuplicateMemoryError:
+        # Already stored — not an error
+        return False
+
+    except PlanLimitError:
+        # Hit plan limit — log it, continue without storing
+        logger.warning("Memory limit reached for user %s", user_id)
+        return False
+
+    except AuthenticationError:
+        # Key is wrong — this needs immediate attention
+        logger.error("Remem authentication failed — check REMEM_API_KEY")
+        return False
+
+    except RememError as e:
+        # Unexpected error — log and continue
+        logger.error("Remem error %s: %s", e.status_code, e.detail)
+        return False
+
+
+def safe_recall(query: str, user_id: str, agent_id: str) -> list:
+    """
+    Search memories safely. Returns empty list on any error.
+    Never raises — your agent always has something to work with.
+    """
+    try:
+        return client.recall(query, user_id=user_id, agent_id=agent_id)
+
+    except AuthenticationError:
+        logger.error("Remem authentication failed — check REMEM_API_KEY")
+        return []
+
+    except RememError as e:
+        logger.error("Remem recall error %s: %s", e.status_code, e.detail)
+        return []
+```
+
+---
+
+## Retry on Server Errors
+
+For transient server errors (5xx), retry with exponential backoff:
+
+```python
+import time
+from remem import RememError
+
+
+def remember_with_retry(
+    content: str,
+    user_id: str,
+    agent_id: str,
+    retries: int = 3,
+) -> bool:
+    for attempt in range(1, retries + 1):
+        try:
+            client.remember(content, user_id=user_id, agent_id=agent_id)
+            return True
+        except RememError as e:
+            if e.status_code >= 500 and attempt < retries:
+                # Server error — wait and retry
+                wait = 2 ** attempt   # 2s, 4s, 8s
+                time.sleep(wait)
+                continue
+            # Not a server error or out of retries
+            raise
+    return False
+```
+
+---
+
+## Error Reference
+
+| Exception | HTTP Code | When It Happens | What To Do |
+|-----------|-----------|-----------------|------------|
+| `AuthenticationError` | 401 | Invalid or missing API key | Fix the key — do not retry |
+| `PlanLimitError` | 402 | Memory limit reached | Upgrade plan or skip storing |
+| `MemoryNotFoundError` | 404 | Memory ID does not exist | Safe to ignore |
+| `DuplicateMemoryError` | 409 | Memory already exists | Safe to ignore |
+| `RememError` | 5xx | Server error | Retry with backoff |
+
+---
+
+## Production Checklist
+
+<Check>Wrap every `remember()` call — DuplicateMemoryError is common and safe to ignore</Check>
+<Check>Handle PlanLimitError gracefully — agent should continue without storing, not crash</Check>
+<Check>Log AuthenticationError immediately — it means your key needs fixing</Check>
+<Check>Return empty list from recall() on error — agent degrades gracefully with no context</Check>
+<Check>Add retry logic for 5xx errors — transient server issues should not kill your agent</Check>

@@ -1,0 +1,280 @@
+---
+title: LangGraph Integration
+description: Add persistent memory to any LangGraph agent in under 10 minutes.
+---
+
+## Overview
+
+LangGraph agents are stateful by design — but that state resets every session. Remem gives your LangGraph agent memory that persists across sessions, deployments, and LLM switches.
+
+The pattern is simple: add two nodes to your graph.
+
+```
+load_memory → your agent → save_memory
+```
+
+`load_memory` runs before your agent responds — fetching relevant memories and injecting them into state. `save_memory` runs after — storing what the user just said.
+
+---
+
+## Prerequisites
+
+```bash
+pip install remem-py langgraph langchain-openai python-dotenv
+```
+
+```bash
+# .env
+REMEM_API_KEY=rm_live_xxx
+OPENAI_API_KEY=sk-xxx
+```
+
+---
+
+## Complete Example
+
+```python
+import os
+from typing import TypedDict, Annotated
+from dotenv import load_dotenv
+
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from remem import AsyncRememClient
+
+load_dotenv()
+
+remem = AsyncRememClient(api_key=os.getenv("REMEM_API_KEY"))
+llm   = ChatOpenAI(model="gpt-4o-mini")
+
+AGENT_ID = "langgraph_agent"
+
+
+# ── State ─────────────────────────────────────────────────────────
+
+class AgentState(TypedDict):
+    messages:       Annotated[list, add_messages]
+    user_id:        str
+    memory_context: str   # injected by load_memory, used by agent
+
+
+# ── Nodes ─────────────────────────────────────────────────────────
+
+async def load_memory(state: AgentState) -> AgentState:
+    """
+    Runs before the agent responds.
+    Fetches memories relevant to the user's latest message
+    and injects them into state as memory_context.
+    """
+    last_message = state["messages"][-1].content
+
+    memories = await remem.recall(
+        query=last_message,
+        user_id=state["user_id"],
+        agent_id=AGENT_ID,
+        top_k=5,
+        min_score=0.0,
+    )
+
+    if memories:
+        context = "\n".join(f"- {m.content}" for m in memories)
+    else:
+        context = "No previous memories for this user."
+
+    return {**state, "memory_context": context}
+
+
+async def agent(state: AgentState) -> AgentState:
+    """
+    The main agent node.
+    Uses memory_context from load_memory in its system prompt.
+    """
+    system = SystemMessage(content=f"""You are a helpful assistant.
+
+What you already know about this user:
+{state['memory_context']}
+
+Use this context to give personalised responses.
+Never ask for information you already know.""")
+
+    response = await llm.ainvoke([system] + state["messages"])
+
+    return {**state, "messages": [response]}
+
+
+async def save_memory(state: AgentState) -> AgentState:
+    """
+    Runs after the agent responds.
+    Saves the user's latest message as a memory.
+    """
+    # Get the last human message
+    human_messages = [
+        m for m in state["messages"]
+        if isinstance(m, HumanMessage)
+    ]
+
+    if human_messages:
+        await remem.remember(
+            content=human_messages[-1].content,
+            user_id=state["user_id"],
+            agent_id=AGENT_ID,
+            memory_type="episodic",
+        )
+
+    return state
+
+
+# ── Graph ─────────────────────────────────────────────────────────
+
+builder = StateGraph(AgentState)
+
+builder.add_node("load_memory", load_memory)
+builder.add_node("agent",       agent)
+builder.add_node("save_memory", save_memory)
+
+builder.set_entry_point("load_memory")
+builder.add_edge("load_memory", "agent")
+builder.add_edge("agent",       "save_memory")
+builder.add_edge("save_memory", END)
+
+graph = builder.compile()
+
+
+# ── Run ───────────────────────────────────────────────────────────
+
+async def chat(user_id: str, message: str) -> str:
+    result = await graph.ainvoke({
+        "messages":       [HumanMessage(content=message)],
+        "user_id":        user_id,
+        "memory_context": "",
+    })
+    return result["messages"][-1].content
+
+
+# Test across sessions
+import asyncio
+
+async def main():
+    USER = "user_victor"
+
+    # Session 1
+    print(await chat(USER, "Hi, I'm Victor. I build AI agents in Lagos."))
+    print(await chat(USER, "I prefer short technical answers."))
+
+    # Session 2 — agent remembers Victor
+    print(await chat(USER, "What do you know about me?"))
+    # "You're Victor, you build AI agents in Lagos,
+    #  and you prefer short technical answers."
+
+asyncio.run(main())
+```
+
+---
+
+## Using context() Instead of recall() at Session Start
+
+The example above uses `recall()` which requires a query. If you want to load memories before the user says their first message — at the very start of a session — use `context()` instead:
+
+```python
+async def load_memory(state: AgentState) -> AgentState:
+    """
+    Use context() when starting a fresh session with no message yet.
+    Use recall() when the user has already sent a message.
+    """
+    messages = state["messages"]
+
+    if messages:
+        # User has sent a message — use semantic search
+        last_message = messages[-1].content
+        memories = await remem.recall(
+            query=last_message,
+            user_id=state["user_id"],
+            agent_id=AGENT_ID,
+            top_k=5,
+        )
+    else:
+        # Session just started — load by importance + recency
+        result = await remem.context(
+            user_id=state["user_id"],
+            agent_id=AGENT_ID,
+            top_k=10,
+        )
+        memories = result.memories
+
+    context = "\n".join(f"- {m.content}" for m in memories) if memories else "No previous memories."
+    return {**state, "memory_context": context}
+```
+
+---
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Don't save every message">
+    Not every message is worth remembering. Filter out low-signal messages
+    before calling save_memory:
+
+    ```python
+    async def save_memory(state: AgentState) -> AgentState:
+        skip = ["ok", "okay", "thanks", "sure", "hi", "hello", "bye", "got it"]
+        human_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+
+        if human_messages:
+            content = human_messages[-1].content
+            if not any(s in content.lower() for s in skip) and len(content) > 10:
+                await remem.remember(
+                    content=content,
+                    user_id=state["user_id"],
+                    agent_id=AGENT_ID,
+                    memory_type="episodic",
+                )
+
+        return state
+    ```
+  </Accordion>
+
+  <Accordion title="Store key facts as semantic memories">
+    When your agent detects an important fact, store it separately as semantic
+    with high importance so it always surfaces:
+
+    ```python
+    # Inside your agent node, after detecting a key fact
+    await remem.remember(
+        "User is based in Lagos, Nigeria",
+        user_id=state["user_id"],
+        agent_id=AGENT_ID,
+        memory_type="semantic",
+        importance=0.9,
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="Handle new users gracefully">
+    The first time a user interacts, `recall()` returns an empty list.
+    Handle this explicitly so your agent does not crash:
+
+    ```python
+    memories = await remem.recall(query=message, user_id=user_id, agent_id=AGENT_ID)
+
+    if memories:
+        context = "\n".join(f"- {m.content}" for m in memories)
+    else:
+        context = "This is a new user. No previous context available."
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guide/error-handling">
+    Handle Remem errors gracefully in production
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/store">
+    Full documentation for every endpoint
+  </Card>
+</CardGroup>
